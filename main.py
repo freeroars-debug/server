@@ -326,8 +326,153 @@ def delete_project(
         )
 
 
+@app.get("/api/projects/{project_id}")
+async def get_project(
+    project_id: str, 
+    clerk_id: str = Depends(get_current_user)
+):
+    """
+    Retrieve a specific project by ID
+    """
+    try:
+        result = supabase.table("projects").select("*").eq("id", project_id).eq("clerk_id", clerk_id).execute()
+
+        if not result.data:
+            raise HTTPException(
+                status_code=404, 
+                detail="Project not found or you don't have permission to access it"
+            )
+
+        return {
+            "success": True,
+            "message": "Project retrieved successfully", 
+            "data": result.data[0]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal server error occurred while retrieving project: {str(e)}"
+        )
 
 
+@app.get("/api/projects/{project_id}/chats")
+async def get_project_chats(
+    project_id: str, 
+    clerk_id: str = Depends(get_current_user)
+):
+    """
+    Retrieve all chats for a specific project
+    """
+    try:
+        result = supabase.table("chats").select("*").eq("project_id", project_id).eq("clerk_id", clerk_id).order("created_at", desc=True).execute()
+
+        return {
+            "success": True,
+            "message": "Project chats retrieved successfully", 
+            "data": result.data or []
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal server error occurred while retrieving project chats: {str(e)}"
+        )
+
+@app.get("/api/projects/{project_id}/settings")
+async def get_project_settings(
+    project_id: str, 
+    clerk_id: str = Depends(get_current_user)
+):
+    """
+    Retrieve settings for a specific project
+    """
+    try:
+        settings_result = supabase.table("project_settings").select("*").eq("project_id", project_id).execute()
+
+        if not settings_result.data:
+            raise HTTPException(
+                status_code=404, 
+                detail="Project settings not found"
+            )
+
+        return {
+            "success": True,
+            "message": "Project settings retrieved successfully", 
+            "data": settings_result.data[0]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"An internal server error occurred while retrieving project settings: {str(e)}"
+        )
+
+@app.get("/api/projects/{project_id}/files")
+async def get_project_files(
+    project_id: str, 
+    clerk_id: str = Depends(get_current_user)
+):
+    try:
+        # Get all files for this project - FK constraints ensure project exists and belongs to the user
+        result = supabase.table("project_documents").select("*").eq("project_id", project_id).eq("clerk_id", clerk_id).order("created_at", desc=True).execute()
+
+        return {
+            "message": "Project files retrieved successfully", 
+            "data": result.data or []
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail = f"Failed to get project files: {str(e)}")
+
+class ChatCreate(BaseModel):
+    title: str
+    project_id: str
+
+
+@app.post("/api/chats")
+async def create_chat(
+    chat: ChatCreate, 
+    clerk_id: str = Depends(get_current_user)
+):
+    try:
+        result = supabase.table("chats").insert({
+            "title": chat.title, 
+            "project_id": chat.project_id, 
+            "clerk_id": clerk_id
+        }).execute()
+
+        return {
+            "message": "Chat created successfully", 
+            "data": result.data[0]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail = f"Failed to create chat: {str(e)}")
+
+
+@app.delete("/api/chats/{chat_id}")
+async def delete_chat(
+    chat_id: str, 
+    clerk_id: str = Depends(get_current_user)
+):
+    try:
+        deleted_result = supabase.table("chats").delete().eq("id", chat_id).eq("clerk_id", clerk_id).execute()
+
+        if not deleted_result.data: 
+            raise HTTPException(status_code=404, detail="Chat not found or access denied")
+
+        return {
+            "message": "Chat Deleted Successfully", 
+            "data": deleted_result.data[0]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail = f"Failed to delete chat: chat_id")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
