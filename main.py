@@ -474,5 +474,55 @@ async def delete_chat(
     except Exception as e:
         raise HTTPException(status_code=500, detail = f"Failed to delete chat: chat_id")
 
+@app.get("/api/projects/{project_id}/settings")
+async def get_project_settings(
+    project_id: str, 
+    clerk_id: str = Depends(get_current_user)
+):
+
+    try: 
+       
+        settings_result = supabase.table("project_settings").select("*").eq("project_id", project_id).execute()
+
+        if not settings_result.data:
+            raise HTTPException(status_code=404, detail="Project settings not found")
+
+        return {
+            "message": "Project settings retrieved successfully", 
+            "data": settings_result.data[0]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail = f"Failed to get project settings: {str(e)}")
+
+
+@app.put("/api/projects/{project_id}/settings")
+async def update_project_settings(
+    project_id: str, 
+    settings: ProjectSettings, 
+    clerk_id: str = Depends(get_current_user)
+): 
+    try: 
+        # First verify the project exists and belongs to the user
+        project_result = supabase.table("projects").select("id").eq("id", project_id).eq("clerk_id", clerk_id).execute()    
+
+        if not project_result.data:
+            raise HTTPException(status_code=404, detail = f"Project not found or access denied")
+
+        # Perform the update
+        result = supabase.table("project_settings").update(settings.model_dump()).eq("project_id", project_id).execute()
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail = f"Project settings not found")
+
+        return {
+            "message": "Project settings updated successfully", 
+            "data": result.data[0]
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail = f"Failed to update project settings: {str(e)}")
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
