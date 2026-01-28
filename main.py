@@ -1,12 +1,14 @@
 import os
+import uuid
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from clerk_backend_api import AuthenticateRequestOptions, Clerk
 import uvicorn
+import boto3
 
 
 
@@ -41,6 +43,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+s3_client = boto3.client(
+    "s3",
+    endpoint_url=os.getenv("AWS_ENDPOINT_URL_S3"),
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    region_name=os.getenv("AWS_REGION")
+)
+
+BUCKET_NAME=os.getenv("S3_BUCKET_NAME")
 
 @app.get("/")
 async def root():
@@ -522,6 +533,108 @@ async def update_project_settings(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail = f"Failed to update project settings: {str(e)}")
+
+
+#AWS routes
+
+class FileUploadRequest(BaseModel):
+    filename: str = Field(..., description="The name of the file")
+    file_type: str = Field(..., description="The type of the file")
+    file_size: int = Field(..., description="The size of the file")
+
+@app.post("/api/projects/{project_id}/files/upload-url"):
+async def get_upload_presigned_url(
+    project_id: str,
+    file_request: FileUploadRequest,
+    clerk_id: str = Depends(get_current_user)):
+
+    try:
+        # Verify project exists and belongs to the current user
+        project_result = (
+            supabase.table("projects")
+            .select("id")
+            .eq("id", project_id)
+            .eq("clerk_id", clerk_id)
+            .execute())
+        
+
+        if not project_result.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Project not found or you don't have permission to upload files to this project",
+            )
+
+        # Generate s3 key
+        file_extension = (
+            file_request.filename.split(".")[-1]
+            if "." in file_request.filename
+            else ""
+        )
+        unique_file_id = uuid.uuid4()
+        s3_key = (
+            f"projects/{project_id}/documents/{unique_file_id}.{file_extension}"
+            if file_extension
+            else f"projects/{project_id}/documents/{unique_file_id}"
+        )
+
+        # Generate upload presigned url (will expire in 1 hour)
+        presigned_url = s3_client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": BUCKET_NAME,
+                "Key": s3_key,
+                "ContentType": file_request.file_type,
+            },
+            ExpiresIn=3600,  # 1 hour
+        )
+
+        if not presigned_url:
+            raise HTTPException(
+                status_code=422,
+                detail="Failed to generate upload presigned url",
+            )
+
+        # Generate database record with pending status
+        document_creation_result = (
+            supabase.table("project_documents")
+            .insert(
+                {
+                    "project_id": project_id,
+                    "filename": file_request.filename,
+                    "s3_key": s3_key,
+                    "file_size": file_request.file_size,
+                    "file_type": file_request.file_type,
+                    "processing_status": "uploading",
+                    "clerk_id": clerk_id,
+                }
+            )
+            .execute()
+        )
+
+        if not document_creation_result.data:
+            raise HTTPException(
+                status_code=422,
+                detail="Failed to create project document - invalid data provided",
+            )
+
+        return {
+            "message": "Upload presigned url generated successfully",
+            "data": {
+                "upload_url": presigned_url,
+                "s3_key": s3_key,
+                "document": document_creation_result.data[0],
+            }
+        }
+
+    except HTTPException as e:
+        raise e
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"An internal server error occurred while generating upload presigned url for {project_id}: {str(e)}",
+        )
+
 
 
 if __name__ == "__main__":
