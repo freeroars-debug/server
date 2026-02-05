@@ -542,7 +542,7 @@ class FileUploadRequest(BaseModel):
     file_type: str = Field(..., description="The type of the file")
     file_size: int = Field(..., description="The size of the file")
 
-@app.post("/api/projects/{project_id}/files/upload-url"):
+@app.post("/api/projects/{project_id}/files/upload-url")
 async def get_upload_presigned_url(
     project_id: str,
     file_request: FileUploadRequest,
@@ -634,6 +634,41 @@ async def get_upload_presigned_url(
             status_code=500,
             detail=f"An internal server error occurred while generating upload presigned url for {project_id}: {str(e)}",
         )
+@app.post("/api/projects/{project_id}/files/confirm")
+async def confirm_file_upload(
+    project_id: str, 
+    confirm_request: dict, 
+    clerk_id: str = Depends(get_current_user)
+):
+    try:
+        s3_key = confirm_request.get("s3_key")
+
+        if not s3_key:
+            raise HTTPException(status_code=400, detail="s3_key is required")
+
+        # Update document status
+        result = supabase.table("project_documents").update({
+            "processing_status": "queued"
+        }).eq("s3_key", s3_key).eq("project_id", project_id).eq("clerk_id", clerk_id).execute()
+
+        document = result.data[0]
+
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Document not found or access denied")
+
+        # Start background preprocessing of the current file with Celery
+
+
+
+        # Return JSON 
+        return {
+            "message": "Upload confirmed, processing started with Celery", 
+            "data": document
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail = f"Failed to confirm upload: {str(e)}")
+
 
 
 
